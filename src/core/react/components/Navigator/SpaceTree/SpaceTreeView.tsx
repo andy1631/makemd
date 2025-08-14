@@ -138,8 +138,7 @@ const treeForRoot = (
       rank: null,
       collapsed: expandedSpaces.includes(space.path) ? false : true,
       sortable: space.sortable,
-      childrenCount: [...(superstate.spacesMap.getInverse(space.path) ?? [])]
-        .length,
+      childrenCount: superstate.getSpaceItems(space.path)?.length ?? 0,
       type: "group",
     });
   const spaceSort = space.metadata?.sort ?? defaultSpaceSort;
