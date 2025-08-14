@@ -1,5 +1,6 @@
 import { renameTagSpacePath } from "core/utils/contexts/optionValuesForColumn";
 import { Superstate } from "makemd-core";
+import { TagNode } from "shared/types/tags";
 import { pathToString } from "utils/path";
 import { encodeSpaceName } from "../core/utils/strings";
 
@@ -71,5 +72,35 @@ export const stringFromTag = (string: string) => {
   }
 
   return string;
+};
+
+export const buildTagHierarchy = (tags: string[]): TagNode[] => {
+  const root: Record<string, { node: TagNode; children: Record<string, any> }> = {};
+
+  for (const tag of tags) {
+    const parts = tag.replace(/^#/, "").split("/");
+    let current = root;
+    let currentPath = "";
+
+    for (const part of parts) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      if (!current[part]) {
+        current[part] = {
+          node: { tag: `#${currentPath}`, children: [] },
+          children: {},
+        };
+      }
+      current = current[part].children;
+    }
+  }
+
+  const convert = (obj: Record<string, { node: TagNode; children: any }>): TagNode[] => {
+    return Object.values(obj).map((v) => ({
+      tag: v.node.tag,
+      children: convert(v.children),
+    }));
+  };
+
+  return convert(root);
 };
 

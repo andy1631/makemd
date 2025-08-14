@@ -36,7 +36,7 @@ import { EventDispatcher } from "shared/utils/dispatchers/dispatcher";
 import { safelyParseJSON } from "shared/utils/json";
 import { mdbSchemaToFrameSchema } from "shared/utils/makemd/schema";
 import { parseMultiString } from "utils/parsers";
-import { getAllParentTags } from "utils/tags";
+import { getAllParentTags, buildTagHierarchy } from "utils/tags";
 import { removeLinkInContexts, removePathInContexts, removeTagInContexts, renameLinkInContexts, renamePathInContexts, renameTagInContexts, updateContextWithProperties } from "../utils/contexts/context";
 import { API } from "./api";
 import { SpacesCommandsAdapter } from "./commands";
@@ -53,6 +53,7 @@ import { ISuperstate, PathStateWithRank } from "shared/types/superstate";
 import { getParentPathFromString } from "utils/path";
 import { parseMDBStringValue } from "utils/properties";
 import { fastSearch, searchPath } from "./workers/search/impl";
+import { TagNode } from "shared/types/tags";
 export type SuperProperty = {
     id: string,
     name: string,
@@ -130,6 +131,7 @@ public api: API;
     public spacesMap: IndexMap //file to space mapping
     public linksMap: IndexMap //link between paths
     public tagsMap: IndexMap //file to tag mapping
+    public tagHierarchy: TagNode[];
     public liveSpaceLinkMap: IndexMap
     //Workers
     public allMetadata: Record<string, {
@@ -202,6 +204,7 @@ public api: API;
         this.spacesMap = new IndexMap();
         this.linksMap = new IndexMap();
         this.tagsMap = new IndexMap();
+        this.tagHierarchy = [];
         this.liveSpaceLinkMap = new IndexMap();
 
         //Initiate Persistance
@@ -325,13 +328,38 @@ public api: API;
             ;
             
         await Promise.all(promises);
-        
+
+    }
+    private findTagChildren(tag: string, nodes: TagNode[]): TagNode[] {
+        for (const node of nodes) {
+            if (node.tag === tag) return node.children;
+            const res = this.findTagChildren(tag, node.children);
+            if (res) return res;
+        }
+        return [];
     }
 
     public  getSpaceItems(spacePath: string, filesOnly?: boolean) : PathStateWithRank[] {
         const items = [...this.spacesMap.getInverse(spacePath)]
+        if (!filesOnly) {
+            if (spacePath == tagsSpacePath) {
+                this.tagHierarchy
+                    .map((t) => tagSpacePathFromTag(t.tag))
+                    .forEach((p) => {
+                        if (!items.includes(p)) items.push(p);
+                    });
+            } else if (spacePath.startsWith('spaces://#')) {
+                const uri = this.spaceManager.uriByString(spacePath);
+                const tag = uri.authority + uri.path;
+                this.findTagChildren(tag, this.tagHierarchy)
+                    .map((t) => tagSpacePathFromTag(t.tag))
+                    .forEach((p) => {
+                        if (!items.includes(p)) items.push(p);
+                    });
+            }
+        }
         const ranks = this.contextsIndex.get(spacePath)?.paths ?? [];
-        
+
         return items.map<PathStateWithRank>((f, i) => {
             if (this.spacesIndex.has(f)) {
                 this.spaceManager.loadPath(this.spacesIndex.get(f).space.notePath);
@@ -339,7 +367,7 @@ public api: API;
                 this.spaceManager.loadPath(f);
             }
             const pathCache = this.pathsIndex.get(f);
-  
+
             return {
               ...pathCache,
               rank: ranks.indexOf(f),
@@ -419,8 +447,11 @@ public api: API;
     
     public async initializeTags() {
 
-        const allTags = this.spaceManager.readTags().map(f => tagSpacePathFromTag(f));
-        const promises = [...allTags].map(l => this.reloadPath(l, true));
+        const tags = this.spaceManager.readTags();
+        const withParents = uniq(tags.flatMap((t) => [t, ...getAllParentTags(t)]));
+        this.tagHierarchy = buildTagHierarchy(withParents);
+        const allTags = withParents.map((f) => tagSpacePathFromTag(f));
+        const promises = [...allTags].map((l) => this.reloadPath(l, true));
         await Promise.all(promises);
     }
 
@@ -966,14 +997,20 @@ public async updateSpaceMetadata (spacePath: string, metadata: SpaceDefinition) 
             if (!_.isEqual(cache.spaces, Array.from(this.spacesMap.get(path)))) {
                 this.spacesMap.set(path, new Set(cache.spaces))
                 //initiate missing tags
-                const promises = cache.tags.map(f => fileSystemSpaceInfoFromTag(this.spaceManager, f)).filter(f => !this.spacesIndex.has(f.path)).map(async f =>  
-                    {
+                const tagSet = new Set<string>();
+                cache.tags.forEach((t) => {
+                    tagSet.add(t);
+                    getAllParentTags(t).forEach((p) => tagSet.add(p));
+                });
+                const promises = [...tagSet]
+                    .map((f) => fileSystemSpaceInfoFromTag(this.spaceManager, f))
+                    .filter((f) => !this.spacesIndex.has(f.path))
+                    .map(async (f) => {
                         await this.reloadSpace(f);
                         this.reloadContext(f, { force: false, calculate: true });
                         await this.reloadPath(f.path);
-                        return 
-                    }
-                );
+                        return;
+                    });
                 const allPromises = Promise.all(promises)
                 await allPromises.then(f => {
                     this.dispatchEvent("spaceStateUpdated", {path: tagsSpacePath});

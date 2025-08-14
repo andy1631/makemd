@@ -16,6 +16,7 @@ import { ContextState, PathState, SpaceState, SuperstateEvent } from "./PathStat
 import { FilterGroupDef, SpaceDefinition } from "./spaceDef";
 import { SpaceInfo } from "./spaceInfo";
 import { SpaceManagerInterface } from "./spaceManager";
+import { TagNode } from "./tags";
 import { IUIManager } from "./uiManager";
 
 
@@ -47,6 +48,7 @@ export abstract class ISuperstate {
     spacesMap: IndexMap;
     linksMap: IndexMap;
     tagsMap: IndexMap;
+    tagHierarchy: TagNode[];
     liveSpaceLinkMap: IndexMap;
     allMetadata: Record<string, { name: string; properties: Metadata[] }>;
     focuses: Focus[];
